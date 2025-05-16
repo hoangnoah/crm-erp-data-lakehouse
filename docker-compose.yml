@@ -1,0 +1,105 @@
+services:
+  spark-master:
+    image: hanvocado/spark:3.2
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+    env_file:
+      - ./spark/.env
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+    volumes:
+      - ./spark/scripts:/opt/work/spark-scripts
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 0.5G
+
+  spark-worker:
+    image: hanvocado/spark:3.2
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER=spark://spark-master:7077
+    env_file:
+      - ./spark/.env
+    depends_on:
+      - spark-master
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '1.0'
+          memory: 0.5G
+
+  minio:
+    image: minio/minio
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  postgres-metastore:
+    image: postgres:latest
+    container_name: postgres-metastore
+    environment:
+      POSTGRES_DB: metastore
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: hive
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hive"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  hive-metastore:
+    image: hanvocado/hive-metastore:4.0
+    container_name: hive-metastore
+    depends_on:
+      postgres-metastore:
+        condition: service_healthy
+    environment:
+      - SERVICE_NAME=metastore
+      - HIVE_METASTORE_DB_TYPE=postgres
+      - HIVE_METASTORE_DB_HOST=postgres-metastore
+      - HIVE_METASTORE_DB_NAME=metastore
+      - HIVE_METASTORE_DB_USER=hive
+      - HIVE_METASTORE_DB_PASS=hive
+    env_file:
+      - ./hive/.env
+    ports:
+      - "9083:9083"
+    command: >
+      bash -c "
+        /opt/hive/bin/schematool -initSchema -dbType postgres --verbose &&
+        hive --service metastore
+      "
+
+  dremio:
+    platform: linux/x86_64
+    image: dremio/dremio-oss:latest
+    ports:
+      - 9047:9047 # Web UI
+      - 31010:31010
+      - 32010:32010
+    volumes:
+      - dremio-data:/opt/dremio/data
+    container_name: dremio
+
+volumes:
+  minio-data:
+  postgres-data:
+  dremio-data:
