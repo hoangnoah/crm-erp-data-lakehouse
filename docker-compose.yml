@@ -78,8 +78,6 @@ services:
       - HIVE_METASTORE_DB_NAME=metastore
       - HIVE_METASTORE_DB_USER=hive
       - HIVE_METASTORE_DB_PASS=hive
-    env_file:
-      - ./hive/.env
     ports:
       - "9083:9083"
     command: >
@@ -99,7 +97,47 @@ services:
       - dremio-data:/opt/dremio/data
     container_name: dremio
 
+  airflow:
+    build: ./docker/airflow
+    restart: always
+    container_name: airflow
+    depends_on:
+      - postgres-airflow
+    volumes:
+      - ./airflow/airflow.cfg:/opt/airflow/airflow.cfg
+      - ./airflow/dags:/opt/airflow/dags
+    ports:
+      - "8081:8080"
+    environment:
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://admin:admin@postgres-airflow:5432/airflow_db"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    env_file:
+      - ./.env
+    entrypoint: /opt/airflow/start-airflow.sh
+
+  postgres-airflow:
+    image: postgres:13
+    container_name: postgres-airflow
+    volumes:
+      - postgres-airflow:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: "admin"
+      POSTGRES_PASSWORD: "admin"
+      POSTGRES_DB: "airflow_db"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
 volumes:
   minio-data:
   postgres-data:
   dremio-data:
+  postgres-airflow:
+  
+
