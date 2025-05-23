@@ -2,9 +2,13 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import abs,col, trim, upper, when, row_number,substring, regexp_replace, isnan, isnull, lead, expr, to_date, current_date
 from pyspark.sql.window import Window
 
-# Khởi tạo Spark
-spark = SparkSession.builder.appName("silver_transform").getOrCreate()
 
+spark = SparkSession.builder \
+    .appName("silver_transform") \
+    .config("spark.sql.catalog.local", "org.apache.iceberg.spark.SparkCatalog") \
+    .config("spark.sql.catalog.local.type", "hadoop") \
+    .config("spark.sql.catalog.local.warehouse", "s3a://warehouse/silver/icebergTables") \
+    .getOrCreate()
 
 # crm_customers
 
@@ -31,8 +35,8 @@ df = df.select(
 )
 
 # Ghi xuống silver layer (Parquet trên MinIO)
-df.write.mode("overwrite").parquet("s3a://warehouse/silver/crm/crm_customers")
-
+df.write.mode("overwrite").parquet("s3a://warehouse/silver/parquetFiles/crm/crm_customers")
+df.writeTo("local.crm.crm_customers").createOrReplace()
 
 # crm_products
 
@@ -67,8 +71,8 @@ df_products = df_products.select(
 )
 
 # Save
-df_products.write.mode("overwrite").parquet("s3a://warehouse/silver/crm/crm_products")
-
+df_products.write.mode("overwrite").parquet("s3a://warehouse/silver/parquetFiles/crm/crm_products")
+df_products.writeTo("local.crm.crm_products").createOrReplace()
 #crm_sales_details
 
 # Đọc từ MinIO
@@ -97,8 +101,8 @@ df_sales = df_sales.select(
 )
 
 # Ghi ra silver
-df_sales.write.mode("overwrite").parquet("s3a://warehouse/silver/crm/crm_sales_details")
-
+df_sales.write.mode("overwrite").parquet("s3a://warehouse/silver/parquetFiles/crm/crm_sales_details")
+df_sales.writeTo("local.crm.crm_sales_details").createOrReplace()
 
 # erp_customer_location
 
@@ -113,8 +117,8 @@ df_location = df_location.select(
     .otherwise(trim(col("cntry"))).alias("customer_country")
 )
 
-df_location.write.mode("overwrite").parquet("s3a://warehouse/silver/erp/erp_customer_location")
-
+df_location.write.mode("overwrite").parquet("s3a://warehouse/silver/parquetFiles/erp/erp_customer_location")
+df_location.writeTo("local.erp.erp_customer_location").createOrReplace()
 # erp_customer_demographic
 
 df_demo = spark.read.option("header", True).csv("s3a://warehouse/bronze/erp/CUST_AZ12.csv")
@@ -127,8 +131,8 @@ df_demo = df_demo.select(
     .otherwise("n/a").alias("gender")
 )
 
-df_demo.write.mode("overwrite").parquet("s3a://warehouse/silver/erp/erp_customer_demographic")
-
+df_demo.write.mode("overwrite").parquet("s3a://warehouse/silver/parquetFiles/erp/erp_customer_demographic")
+df_demo.writeTo("local.erp.erp_customer_demographic").createOrReplace()
 # erp_categories
 
 df_cat = spark.read.option("header", True).csv("s3a://warehouse/bronze/erp/PX_CAT_G1V2.csv")
@@ -140,4 +144,5 @@ df_cat = df_cat.select(
     when(upper(trim(col("maintenance"))) == "YES", 1).otherwise(0).alias("maintenance_flag")
 )
 
-df_cat.write.mode("overwrite").parquet("s3a://warehouse/silver/erp/erp_categories")
+df_cat.write.mode("overwrite").parquet("s3a://warehouse/silver/parquetFiles/erp/erp_categories")
+df_cat.writeTo("local.erp.erp_categories").createOrReplace()
