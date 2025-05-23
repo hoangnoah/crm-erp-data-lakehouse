@@ -128,7 +128,7 @@ with DAG(
         task_id="transform_bronze_to_silver",
         application="/opt/airflow/dags/scripts/transform_bronze_to_silver.py", 
         name="transform_bronze_to_silver",
-        conn_id="spark_conn",
+        conn_id="spark_default",
         verbose=True,
         conf={
             "spark.hadoop.fs.s3a.access.key": AWS_ACCESS_KEY,
@@ -143,7 +143,7 @@ with DAG(
         task_id="load_silver_to_gold",
         application="/opt/airflow/dags/scripts/load_silver_to_gold.py", 
         name="load_silver_to_gold",
-        conn_id="spark_conn",
+        conn_id="spark_default",
         verbose=True,
         conf={
             "spark.hadoop.fs.s3a.access.key": AWS_ACCESS_KEY,
