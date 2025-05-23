@@ -36,7 +36,7 @@ df = df.select(
 
 # Ghi xuống silver layer (Parquet trên MinIO)
 df.write.mode("overwrite").parquet("s3a://warehouse/silver/parquetFiles/crm/crm_customers")
-df.writeTo("local.crm_customers").createOrReplace()
+df.writeTo("local.crm.crm_customers").createOrReplace()
 
 # crm_products
 
@@ -72,7 +72,7 @@ df_products = df_products.select(
 
 # Save
 df_products.write.mode("overwrite").parquet("s3a://warehouse/silver/parquetFiles/crm/crm_products")
-df_products.writeTo("local.crm_products").createOrReplace()
+df_products.writeTo("local.crm.crm_products").createOrReplace()
 #crm_sales_details
 
 # Đọc từ MinIO
@@ -102,7 +102,7 @@ df_sales = df_sales.select(
 
 # Ghi ra silver
 df_sales.write.mode("overwrite").parquet("s3a://warehouse/silver/parquetFiles/crm/crm_sales_details")
-df_sales.writeTo("local.crm_sales_details").createOrReplace()
+df_sales.writeTo("local.crm.crm_sales_details").createOrReplace()
 
 # erp_customer_location
 
@@ -118,7 +118,7 @@ df_location = df_location.select(
 )
 
 df_location.write.mode("overwrite").parquet("s3a://warehouse/silver/parquetFiles/erp/erp_customer_location")
-df_location.writeTo("local.erp_customer_location").createOrReplace()
+df_location.writeTo("local.erp.erp_customer_location").createOrReplace()
 # erp_customer_demographic
 
 df_demo = spark.read.option("header", True).csv("s3a://warehouse/bronze/erp/CUST_AZ12.csv")
@@ -132,7 +132,7 @@ df_demo = df_demo.select(
 )
 
 df_demo.write.mode("overwrite").parquet("s3a://warehouse/silver/parquetFiles/erp/erp_customer_demographic")
-df_demo.writeTo("local.erp_customer_demographic").createOrReplace()
+df_demo.writeTo("local.erp.erp_customer_demographic").createOrReplace()
 # erp_categories
 
 df_cat = spark.read.option("header", True).csv("s3a://warehouse/bronze/erp/PX_CAT_G1V2.csv")
@@ -145,4 +145,4 @@ df_cat = df_cat.select(
 )
 
 df_cat.write.mode("overwrite").parquet("s3a://warehouse/silver/parquetFiles/erp/erp_categories")
-df_cat.writeTo("local.erp_categories").createOrReplace()
+df_cat.writeTo("local.erp.erp_categories").createOrReplace()
