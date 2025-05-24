@@ -5,7 +5,7 @@ services:
     environment:
       - SPARK_MODE=master
     env_file:
-      - ./spark/.env
+      - ./.env
     ports:
       - "7077:7077"
       - "8080:8080"
@@ -23,7 +23,7 @@ services:
       - SPARK_MODE=worker
       - SPARK_MASTER=spark://spark-master:7077
     env_file:
-      - ./spark/.env
+      - ./.env
     depends_on:
       - spark-master
     deploy:
@@ -140,4 +140,3 @@ volumes:
   dremio-data:
   postgres-airflow:
   
-
