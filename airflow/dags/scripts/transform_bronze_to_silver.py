@@ -1,148 +1,191 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import abs,col, trim, upper, when, row_number,substring, regexp_replace, isnan, isnull, lead, expr, to_date, current_date
-from pyspark.sql.window import Window
+import os
 
+# Lấy key từ biến môi trường
+AWS_ACCESS_KEY = os.environ.get("AWS_ACCESS_KEY_ID")
+AWS_SECRET_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
 
-spark = SparkSession.builder \
-    .appName("silver_transform") \
-    .config("spark.sql.catalog.local", "org.apache.iceberg.spark.SparkCatalog") \
-    .config("spark.sql.catalog.local.type", "hadoop") \
-    .config("spark.sql.catalog.local.warehouse", "s3a://warehouse/silver/icebergTables") \
+# Khởi tạo SparkSession + Iceberg + Hive Metastore
+spark = (
+    SparkSession.builder
+    .appName("IcebergSilverETL")
+    .config("spark.hadoop.fs.s3a.access.key", AWS_ACCESS_KEY)
+    .config("spark.hadoop.fs.s3a.secret.key", AWS_SECRET_KEY)
     .getOrCreate()
+)
 
-# crm_customers
+    
 
-# Đọc từ bronze layer (MinIO)
+spark.sql("CREATE DATABASE IF NOT EXISTS lakehouse.bronze")
+spark.sql("CREATE DATABASE IF NOT EXISTS lakehouse.silver")
+
+# 1. CRM CUSTOMERS
 df = spark.read.option("header", True).csv("s3a://warehouse/bronze/crm/cust_info.csv")
 
-# Chỉ lấy bản ghi mới nhất mỗi customer
-window_spec = Window.partitionBy("cst_id").orderBy(col("cst_create_date").desc())
-df = df.withColumn("row_num", row_number().over(window_spec)).filter(col("row_num") == 1)
+df.writeTo("lakehouse.bronze.crm_cust_info").createOrReplace()
 
-# ETL giống SQL Server
-df = df.select(
-    col("cst_id").alias("customer_crm_id"),
-    col("cst_key").alias("customer_id"),
-    trim(col("cst_firstname")).alias("firstname"),
-    trim(col("cst_lastname")).alias("lastname"),
-    when(upper(trim(col("cst_marital_status"))) == "S", "Single")
-        .when(upper(trim(col("cst_marital_status"))) == "M", "Married")
-        .otherwise("n/a").alias("marital_status"),
-    when(upper(trim(col("cst_gndr"))) == "F", "Female")
-        .when(upper(trim(col("cst_gndr"))) == "M", "Male")
-        .otherwise("n/a").alias("gender"),
-    col("cst_create_date").alias("join_crm_date")
-)
+spark.sql("""
+CREATE TABLE IF NOT EXISTS lakehouse.silver.crm_customers (
+    customer_crm_id INT, customer_id STRING, firstname STRING, lastname STRING,
+    marital_status STRING, gender STRING, join_crm_date DATE
+) USING iceberg
+""")
 
-# Ghi xuống silver layer (Parquet trên MinIO)
-df.write.mode("overwrite").parquet("s3a://warehouse/silver/parquetFiles/crm/crm_customers")
-df.writeTo("local.crm.crm_customers").createOrReplace()
+spark.sql("""
+INSERT OVERWRITE lakehouse.silver.crm_customers
+SELECT 
+    CAST(cst_id AS INT),
+    cst_key,
+    TRIM(cst_firstname),
+    TRIM(cst_lastname),
+    CASE 
+        WHEN UPPER(TRIM(cst_marital_status)) = 'S' THEN 'Single'
+        WHEN UPPER(TRIM(cst_marital_status)) = 'M' THEN 'Married'
+        ELSE 'n/a'
+    END,
+    CASE 
+        WHEN UPPER(TRIM(cst_gndr)) = 'F' THEN 'Female'
+        WHEN UPPER(TRIM(cst_gndr)) = 'M' THEN 'Male'
+        ELSE 'n/a'
+    END,
+    CAST(cst_create_date AS DATE)
+FROM (
+    SELECT *, ROW_NUMBER() OVER (PARTITION BY cst_id ORDER BY cst_create_date DESC) AS rn
+    FROM lakehouse.bronze.crm_cust_info
+    WHERE cst_id IS NOT NULL
+) t WHERE rn = 1
+""")
 
-# crm_products
+# 2. CRM PRODUCTS
+df = spark.read.option("header", True).csv("s3a://warehouse/bronze/crm/prd_info.csv")
 
-# Load
-df_products = spark.read.option("header", True).csv("s3a://warehouse/bronze/crm/prd_info.csv")
 
-# Chuẩn hóa cột cần thiết và giữ lại prd_key cho window
-df_products = df_products.withColumn("product_id", substring("prd_key", 7, 100)) \
-    .withColumn("category_id", regexp_replace(substring("prd_key", 1, 5), "-", "_")) \
-    .withColumn("product_line", when(upper(trim(col("prd_line"))) == "M", "Mountain")
-        .when(upper(trim(col("prd_line"))) == "R", "Road")
-        .when(upper(trim(col("prd_line"))) == "S", "Other Sales")
-        .when(upper(trim(col("prd_line"))) == "T", "Touring")
-        .otherwise("n/a")) \
-    .withColumn("start_date", col("prd_start_dt").cast("date"))
+df.writeTo("lakehouse.bronze.crm_prd_info").createOrReplace()
 
-# Tính end_date
-window_spec = Window.partitionBy("prd_key").orderBy("prd_start_dt")
-df_products = df_products.withColumn("end_date", lead("start_date").over(window_spec))
-df_products = df_products.withColumn("end_date", expr("date_sub(end_date, 1)"))
+spark.sql("""
+CREATE TABLE IF NOT EXISTS lakehouse.silver.crm_products (
+    product_crm_id INT, product_id STRING, category_id STRING,
+    product_name STRING, product_cost INT, product_line STRING,
+    start_date DATE, end_date DATE
+) USING iceberg
+""")
 
-# Chọn lại cột final
-df_products = df_products.select(
-    col("prd_id").alias("product_crm_id"),
-    "product_id",
-    "category_id",
-    col("prd_nm").alias("product_name"),
-    when(col("prd_cost").isNull(), 0).otherwise(col("prd_cost")).alias("product_cost"),
-    "product_line",
-    "start_date",
-    "end_date"
-)
+spark.sql("""
+INSERT OVERWRITE lakehouse.silver.crm_products
+SELECT 
+    CAST(prd_id AS INT),
+    SUBSTRING(prd_key, 7),
+    REPLACE(SUBSTRING(prd_key, 1, 5), '-', '_'),
+    prd_nm,
+    CAST(COALESCE(prd_cost, 0) AS INT),
+    CASE 
+        WHEN UPPER(TRIM(prd_line)) = 'M' THEN 'Mountain'
+        WHEN UPPER(TRIM(prd_line)) = 'R' THEN 'Road'
+        WHEN UPPER(TRIM(prd_line)) = 'S' THEN 'Other Sales'
+        WHEN UPPER(TRIM(prd_line)) = 'T' THEN 'Touring'
+        ELSE 'n/a'
+    END,
+    CAST(prd_start_dt AS DATE),
+    CAST(
+        LEAD(CAST(prd_start_dt AS DATE)) OVER (PARTITION BY prd_key ORDER BY prd_start_dt) - 1 
+        AS DATE
+    )
+FROM lakehouse.bronze.crm_prd_info
+""")
 
-# Save
-df_products.write.mode("overwrite").parquet("s3a://warehouse/silver/parquetFiles/crm/crm_products")
-df_products.writeTo("local.crm.crm_products").createOrReplace()
-#crm_sales_details
+# 3. CRM SALES
+df = spark.read.option("header", True).csv("s3a://warehouse/bronze/crm/sales_details.csv")
+df.writeTo("lakehouse.bronze.crm_sales_details").createOrReplace()
 
-# Đọc từ MinIO
-df_sales = spark.read.option("header", True).csv("s3a://warehouse/bronze/crm/sales_details.csv")
+spark.sql("""
+CREATE TABLE IF NOT EXISTS lakehouse.silver.crm_sales_details (
+    order_id STRING, product_id STRING, customer_crm_id INT,
+    order_date DATE, ship_date DATE, due_date DATE,
+    total_amount INT, quantity INT, price INT
+) USING iceberg
+""")
 
-# Format ngày đơn giản cho các cột ngày (vì file gốc kiểu INT 20220504 → cần ép kiểu)
-def parse_date(colname):
-    return when((col(colname).cast("string").rlike("^[0-9]{8}$")),
-                to_date(col(colname).cast("string"), "yyyyMMdd")
-            ).otherwise(None)
+spark.sql("""
+INSERT OVERWRITE lakehouse.silver.crm_sales_details
+SELECT 
+    sls_ord_num,
+    sls_prd_key,
+    CAST(sls_cust_id AS INT),
+    CASE WHEN sls_order_dt RLIKE '^[0-9]{8}$' THEN TO_DATE(CAST(sls_order_dt AS STRING), 'yyyyMMdd') ELSE NULL END,
+    CASE WHEN sls_ship_dt RLIKE '^[0-9]{8}$' THEN TO_DATE(CAST(sls_ship_dt AS STRING), 'yyyyMMdd') ELSE NULL END,
+    CASE WHEN sls_due_dt RLIKE '^[0-9]{8}$' THEN TO_DATE(CAST(sls_due_dt AS STRING), 'yyyyMMdd') ELSE NULL END,
+    CAST(
+        CASE WHEN sls_sales IS NULL OR sls_sales <= 0 OR sls_sales != sls_quantity * ABS(sls_price)
+             THEN sls_quantity * ABS(sls_price)
+             ELSE sls_sales END AS INT),
+    CAST(sls_quantity AS INT),
+    CAST(
+        CASE WHEN sls_price IS NULL OR sls_price <= 0
+             THEN sls_sales / NULLIF(sls_quantity, 0)
+             ELSE sls_price END AS INT)
+FROM lakehouse.bronze.crm_sales_details
+""")
 
-df_sales = df_sales.select(
-    col("sls_ord_num").alias("order_id"),
-    col("sls_prd_key").alias("product_id"),
-    col("sls_cust_id").alias("customer_crm_id"),
-    parse_date("sls_order_dt").alias("order_date"),
-    parse_date("sls_ship_dt").alias("ship_date"),
-    parse_date("sls_due_dt").alias("due_date"),
-    when((col("sls_sales").isNull()) | (col("sls_sales") <= 0) | 
-         (col("sls_sales") != col("sls_quantity") * abs(col("sls_price"))),
-         col("sls_quantity") * abs(col("sls_price"))).otherwise(col("sls_sales")).alias("total_amount"),
-    col("sls_quantity").cast("int").alias("quantity"),
-    when((col("sls_price").isNull()) | (col("sls_price") <= 0),
-         col("sls_sales") / when(col("sls_quantity") != 0, col("sls_quantity")).otherwise(None))
-         .otherwise(col("sls_price")).alias("price")
-)
+# 4. ERP DEMOGRAPHIC
+df = spark.read.option("header", True).csv("s3a://warehouse/bronze/erp/CUST_AZ12.csv")
+df.writeTo("lakehouse.bronze.erp_cust_az12").createOrReplace()
 
-# Ghi ra silver
-df_sales.write.mode("overwrite").parquet("s3a://warehouse/silver/parquetFiles/crm/crm_sales_details")
-df_sales.writeTo("local.crm.crm_sales_details").createOrReplace()
+spark.sql("""
+CREATE TABLE IF NOT EXISTS lakehouse.silver.erp_customer_demographic (
+    customer_id STRING, birthday DATE, gender STRING
+) USING iceberg
+""")
 
-# erp_customer_location
+spark.sql("""
+INSERT OVERWRITE lakehouse.silver.erp_customer_demographic
+SELECT 
+    CASE WHEN cid LIKE 'NAS%' THEN SUBSTRING(cid, 4) ELSE cid END,
+    CASE WHEN bdate > CURRENT_DATE() THEN NULL ELSE CAST(bdate AS DATE) END,
+    CASE 
+        WHEN UPPER(TRIM(gen)) IN ('F', 'FEMALE') THEN 'Female'
+        WHEN UPPER(TRIM(gen)) IN ('M', 'MALE') THEN 'Male'
+        ELSE 'n/a'
+    END
+FROM lakehouse.bronze.erp_cust_az12
+""")
 
-df_location = spark.read.option("header", True).csv("s3a://warehouse/bronze/erp/LOC_A101.csv")
+# 5. ERP LOCATION
+df = spark.read.option("header", True).csv("s3a://warehouse/bronze/erp/LOC_A101.csv")
+df.writeTo("lakehouse.bronze.erp_loc_a101").createOrReplace()
 
-df_location = df_location.select(
-    regexp_replace(col("cid"), "-", "").alias("customer_id"),
-    when(trim(col("cntry")) == "DE", "Germany")
-    .when(trim(col("cntry")).isin("US", "USA"), "United States")
-    .when(trim(col("cntry")) == "", "n/a")
-    .when(col("cntry").isNull(), "n/a")
-    .otherwise(trim(col("cntry"))).alias("customer_country")
-)
+spark.sql("""
+CREATE TABLE IF NOT EXISTS lakehouse.silver.erp_customer_location (
+    customer_id STRING, customer_country STRING
+) USING iceberg
+""")
 
-df_location.write.mode("overwrite").parquet("s3a://warehouse/silver/parquetFiles/erp/erp_customer_location")
-df_location.writeTo("local.erp.erp_customer_location").createOrReplace()
-# erp_customer_demographic
+spark.sql("""
+INSERT OVERWRITE lakehouse.silver.erp_customer_location
+SELECT 
+    REPLACE(cid, '-', ''),
+    CASE 
+        WHEN TRIM(cntry) = 'DE' THEN 'Germany'
+        WHEN TRIM(cntry) IN ('US', 'USA') THEN 'United States'
+        WHEN TRIM(cntry) = '' OR cntry IS NULL THEN 'n/a'
+        ELSE TRIM(cntry)
+    END
+FROM lakehouse.bronze.erp_loc_a101
+""")
 
-df_demo = spark.read.option("header", True).csv("s3a://warehouse/bronze/erp/CUST_AZ12.csv")
+# 6. ERP CATEGORY
+df = spark.read.option("header", True).csv("s3a://warehouse/bronze/erp/PX_CAT_G1V2.csv")
+df.writeTo("lakehouse.bronze.erp_px_cat_g1v2").createOrReplace()
 
-df_demo = df_demo.select(
-    when(col("cid").startswith("NAS"), substring(col("cid"), 4, 100)).otherwise(col("cid")).alias("customer_id"),
-    when(col("bdate") > current_date(), None).otherwise(col("bdate").cast("date")).alias("birthday"),
-    when(upper(trim(col("gen"))).isin("F", "FEMALE"), "Female")
-    .when(upper(trim(col("gen"))).isin("M", "MALE"), "Male")
-    .otherwise("n/a").alias("gender")
-)
+spark.sql("""
+CREATE TABLE IF NOT EXISTS lakehouse.silver.erp_categories (
+    category_id STRING, category_name STRING, subcategory_name STRING, maintenance_flag BOOLEAN
+) USING iceberg
+""")
 
-df_demo.write.mode("overwrite").parquet("s3a://warehouse/silver/parquetFiles/erp/erp_customer_demographic")
-df_demo.writeTo("local.erp.erp_customer_demographic").createOrReplace()
-# erp_categories
-
-df_cat = spark.read.option("header", True).csv("s3a://warehouse/bronze/erp/PX_CAT_G1V2.csv")
-
-df_cat = df_cat.select(
-    col("id").alias("category_id"),
-    col("cat").alias("category_name"),
-    col("subcat").alias("subcategory_name"),
-    when(upper(trim(col("maintenance"))) == "YES", 1).otherwise(0).alias("maintenance_flag")
-)
-
-df_cat.write.mode("overwrite").parquet("s3a://warehouse/silver/parquetFiles/erp/erp_categories")
-df_cat.writeTo("local.erp.erp_categories").createOrReplace()
+spark.sql("""
+INSERT OVERWRITE lakehouse.silver.erp_categories
+SELECT 
+    id, cat, subcat,
+    CASE WHEN UPPER(TRIM(maintenance)) = 'YES' THEN TRUE ELSE FALSE END
+FROM lakehouse.bronze.erp_px_cat_g1v2
+""")
