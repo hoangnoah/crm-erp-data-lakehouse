@@ -1,3 +1,5 @@
+version: "3.8"
+
 services:
   spark-master:
     image: hanvocado/spark:3.2
@@ -134,9 +136,24 @@ services:
       timeout: 10s
       retries: 5
 
+  jupyter:
+    image: jupyter/base-notebook:latest
+    container_name: jupyter
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./notebooks:/home/jovyan/work
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - NB_UID=1000
+      - NB_GID=100
+    command: start-notebook.sh --NotebookApp.token=''
+    restart: unless-stopped
+    depends_on:
+      - spark-master
+
 volumes:
   minio-data:
   postgres-data:
   dremio-data:
   postgres-airflow:
-  
