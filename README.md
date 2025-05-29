@@ -17,6 +17,9 @@ This project implements a Data Lakehouse architecture using a combination of ope
 
 The project sets up the following components:
 
+![image](https://github.com/user-attachments/assets/ef83bdc6-67a0-409f-b4aa-1850d9c515da)
+
+
 - **MinIO** serves as the object storage layer.
 - **Apache Iceberg** (managed via Spark/Hive Metastore) provides the table format on top of MinIO.
 - **Hive Metastore** stores schema information for Iceberg tables, backed by a **PostgreSQL** database.
