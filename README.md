@@ -41,7 +41,7 @@ Follow these steps to get the project running on your local machine.
 1.  **Clone the repository:**
 
     ```bash
-    git clone <repository_url>
+    git clone [<repository_url>](https://github.com/hoangnoah/ute-big-data.git)
     cd <repository_folder>
     ```
 
@@ -98,16 +98,6 @@ Once the containers are running, you can access the UIs for various services:
 - **Querying Data with Dremio:** Connect Dremio to the Hive Metastore and MinIO, then use the Dremio UI or clients to query your data lake.
 - **Creating Airflow DAGs:** Place Python scripts defining workflows in `./airflow/dags/` to have Airflow pick them up.
 - **Interactive Analysis:** Use the Jupyter notebook to connect to Spark and analyze data.
-
-_(Add more specific examples based on actual scripts in `spark/scripts`, `airflow/dags`, etc. if possible)_
-
-## Contributing
-
-(Section for contribution guidelines - add details if available)
-
-## License
-
-(Section for license information - add details if available)
 
 ## Data
 
