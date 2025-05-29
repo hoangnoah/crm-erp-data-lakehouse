@@ -41,8 +41,8 @@ Follow these steps to get the project running on your local machine.
 1.  **Clone the repository:**
 
     ```bash
-    git clone [https://github.com/hoangnoah/crm-erp-data-lakehouse.git]
-    cd <repository_folder>
+    git clone https://github.com/hoangnoah/crm-erp-data-lakehouse.git
+    cd crm-erp-data-lakehouse
     ```
 
 2.  **Environment Variables:**
