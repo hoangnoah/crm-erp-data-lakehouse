@@ -41,7 +41,7 @@ Follow these steps to get the project running on your local machine.
 1.  **Clone the repository:**
 
     ```bash
-    git clone [<repository_url>](https://github.com/hoangnoah/ute-big-data.git)
+    git clone [https://github.com/hoangnoah/crm-erp-data-lakehouse.git]
     cd <repository_folder>
     ```
 
